@@ -1,6 +1,7 @@
 import asyncio
 import os
 import random
+import sys
 import time
 import aiohttp
 import orjson
@@ -135,23 +136,27 @@ async def auto_claim_tasks(session):
 async def drain_energy_and_refill(session):
     """Drains remaining energy with taps and uses fullEnergy boosts automatically."""
     for b_idx in range(3):
-        # 1. Tap down available energy
-        for _ in range(12):
+        for t_idx in range(12):
             payload = orjson.dumps({"taps": 600})
             try:
                 async with session.post(TAP_URL, data=payload, headers=HEADERS, ssl=False) as resp:
+                    body = await resp.text()
                     if resp.status == 200:
-                        data = await resp.json()
+                        data = orjson.loads(body)
                         energy = data.get("energy", 0)
+                        print(f"⚡ [{get_uptime()}] [DRAIN #{t_idx+1}] Status: {resp.status} | Response: {body}")
                         if energy < 500:
                             break
                     elif resp.status == 429:
+                        print(f"⚠️ [{get_uptime()}] [DRAIN #{t_idx+1}] Rate limited (429). Waiting...")
                         await asyncio.sleep(0.5)
-            except Exception:
-                pass
+                    else:
+                        print(f"⚠️ [{get_uptime()}] [DRAIN #{t_idx+1}] Status: {resp.status} | Response: {body}")
+            except Exception as e:
+                print(f"⏱️ [{get_uptime()}] [DRAIN] Error: {e}")
             await asyncio.sleep(0.2)
 
-        # 2. Use free Full Energy boost
+        # Use free Full Energy boost
         boost_payload = orjson.dumps({"type": "fullEnergy"})
         try:
             async with session.post(BOOST_USE_URL, data=boost_payload, headers=HEADERS, ssl=False) as resp:
@@ -188,8 +193,7 @@ async def rocket_worker(session):
                         turbo_active_until = data.get("turboActiveUntil", 0) / 1000.0
                         turbo_event.set()
                 elif resp.status == 400:
-                    # On cooldown
-                    pass
+                    print(f"⏳ [{get_uptime()}] [ROCKET #{idx}] Cooldown active (waiting for next rocket)...")
                 else:
                     print(f"⏱️ [{get_uptime()}] [ROCKET #{idx}] Status: {resp.status} | {body}")
 
@@ -257,7 +261,6 @@ async def main():
     total_taps = int(os.getenv("TOTAL_REQUESTS", "5000"))
 
     # Check if 't' argument passed (e.g. python3 test.py t)
-    run_tasks = len(sys.argv) > 1 and "t" in sys.argv[1:].lower() if hasattr(sys.argv, "__iter__") else False
     run_tasks = any(arg.lower() == "t" for arg in sys.argv[1:])
 
     connector = aiohttp.TCPConnector(limit=10, ssl=False)
