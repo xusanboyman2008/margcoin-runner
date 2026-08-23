@@ -239,8 +239,10 @@ async def tap_worker(session, total_taps):
                     data = orjson.loads(body)
                     if not data.get("turboActive"):
                         turbo_event.clear()
-                    print(f"⚡ [{get_uptime()}] [TAP #{idx}/{total_taps}] Sent: 600 | Credited: +{data.get('tapped')} | Balance: {data.get('balance'):,.2f}")
+                    print(f"⚡ [{get_uptime()}] [TAP #{idx}/{total_taps}] Status: {resp.status} | Response: {body}")
                     idx += 1
+                else:
+                    print(f"⚠️ [{get_uptime()}] [TAP #{idx}/{total_taps}] Status: {resp.status} | Response: {body}")
 
         except Exception as e:
             print(f"⏱️ [{get_uptime()}] [TAP #{idx}] Error: {type(e).__name__} ({e})")
