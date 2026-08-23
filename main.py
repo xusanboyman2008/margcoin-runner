@@ -1,6 +1,5 @@
 import asyncio
 import os
-import random
 import sys
 import time
 import aiohttp
@@ -40,7 +39,6 @@ HEADERS = {
     "Connection": "keep-alive"
 }
 
-# Global State & Control
 start_time = None
 pause_event = asyncio.Event()
 pause_event.set()
@@ -48,7 +46,6 @@ pause_event.set()
 turbo_event = asyncio.Event()
 turbo_event.clear()
 turbo_active_until = 0
-auth_lock = asyncio.Lock()
 
 
 def get_uptime() -> str:
@@ -59,7 +56,7 @@ def get_uptime() -> str:
 
 
 async def auto_login(session):
-    """Refreshes Bearer token automatically using initData without needing bot polling."""
+    """Refreshes Bearer token automatically using initData."""
     print("🔑 Auto-logging in via initData...")
     payload = orjson.dumps({"initData": INIT_DATA})
     async with session.post(LOGIN_URL, data=payload, headers=HEADERS, ssl=False) as resp:
@@ -68,7 +65,7 @@ async def auto_login(session):
             token = f"Bearer {data['token']}"
             HEADERS["Authorization"] = token
             user = data.get("user", {})
-            print(f"✅ Login Successful | User: {user.get('username')} | Balance: {user.get('balance'):,.2f} | Energy: {user.get('energy')}/{user.get('maxEnergy')}")
+            print(f"✅ Login Successful | User: {user.get('username')} | Balance: {user.get('balance'):,.2f} | Energy: {user.get('energy')}/{user.get('maxEnergy')}\n")
             return token
         else:
             text = await resp.text()
@@ -85,7 +82,6 @@ async def auto_claim_tasks(session):
                 return
             tasks = await resp.json()
 
-        # Get already completed list from user state
         async with session.get("https://server.margcoin.fun/api/game/state", headers=HEADERS, ssl=False) as s_resp:
             if s_resp.status == 200:
                 u_data = await s_resp.json()
@@ -128,7 +124,7 @@ async def auto_claim_tasks(session):
                             print(f"🎉 Claimed Task: {title} (+{reward:,}) | Balance: {res.get('balance', 0):,.2f}")
             except Exception:
                 pass
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(2.0)
     except Exception as e:
         print(f"⚠️ Task claimer error: {e}")
 
@@ -136,27 +132,19 @@ async def auto_claim_tasks(session):
 async def drain_energy_and_refill(session):
     """Drains remaining energy with taps and uses fullEnergy boosts automatically."""
     for b_idx in range(3):
-        for t_idx in range(12):
-            payload = orjson.dumps({"taps": 600})
-            try:
-                async with session.post(TAP_URL, data=payload, headers=HEADERS, ssl=False) as resp:
-                    body = await resp.text()
-                    if resp.status == 200:
-                        data = orjson.loads(body)
-                        energy = data.get("energy", 0)
-                        print(f"⚡ [{get_uptime()}] [DRAIN #{t_idx+1}] Status: {resp.status} | Response: {body}")
-                        if energy < 500:
-                            break
-                    elif resp.status == 429:
-                        print(f"⚠️ [{get_uptime()}] [DRAIN #{t_idx+1}] Rate limited (429). Waiting...")
-                        await asyncio.sleep(0.5)
-                    else:
-                        print(f"⚠️ [{get_uptime()}] [DRAIN #{t_idx+1}] Status: {resp.status} | Response: {body}")
-            except Exception as e:
-                print(f"⏱️ [{get_uptime()}] [DRAIN] Error: {e}")
-            await asyncio.sleep(0.2)
+        # Burst down available energy in 1 single 6424-tap request
+        payload = orjson.dumps({"taps": 6424})
+        try:
+            async with session.post(TAP_URL, data=payload, headers=HEADERS, ssl=False) as resp:
+                body = await resp.text()
+                if resp.status == 200:
+                    print(f"⚡ [{get_uptime()}] [ENERGY DRAIN] Status: {resp.status} | Response: {body}")
+        except Exception:
+            pass
 
-        # Use free Full Energy boost
+        await asyncio.sleep(0.85)
+
+        # Refill energy via boost
         boost_payload = orjson.dumps({"type": "fullEnergy"})
         try:
             async with session.post(BOOST_USE_URL, data=boost_payload, headers=HEADERS, ssl=False) as resp:
@@ -170,7 +158,7 @@ async def drain_energy_and_refill(session):
 
 
 async def rocket_worker(session):
-    """Triggers Rocket Boost on exact cooldown without 429 errors."""
+    """Probes and triggers Rocket Boost on exact cooldown."""
     global turbo_active_until
     idx = 1
 
@@ -188,28 +176,32 @@ async def rocket_worker(session):
 
                 if resp.status == 200:
                     data = orjson.loads(body)
-                    print(f"🚀 [{get_uptime()}] [ROCKET #{idx}] Activated Turbo! Ends: {data.get('turboActiveUntil')} | Balance: {data.get('balance'):,.2f}")
+                    print(f"🚀 [{get_uptime()}] [ROCKET #{idx}] Activated Turbo! Ends: {data.get('turboActiveUntil')} | Balance: {data.get('balance'):,.2f} | Response: {body}")
                     if data.get("turboActive"):
                         turbo_active_until = data.get("turboActiveUntil", 0) / 1000.0
                         turbo_event.set()
+                        # Sleep through turbo active window + cooldown before next probe
+                        await asyncio.sleep(50.0)
+                        continue
                 elif resp.status == 400:
-                    print(f"⏳ [{get_uptime()}] [ROCKET #{idx}] Cooldown active (waiting for next rocket)...")
+                    pass
                 else:
-                    print(f"⏱️ [{get_uptime()}] [ROCKET #{idx}] Status: {resp.status} | {body}")
+                    print(f"⏱️ [{get_uptime()}] [ROCKET #{idx}] Status: {resp.status} | Response: {body}")
 
                 idx += 1
         except Exception as e:
-            print(f"⏱️ [{get_uptime()}] [ROCKET #{idx}] Failed: {type(e).__name__}")
+            print(f"⏱️ [{get_uptime()}] [ROCKET #{idx}] Error: {type(e).__name__} ({e})")
 
         elapsed = time.time() - req_start
-        await asyncio.sleep(max(0.0, 16.5 - elapsed))
+        await asyncio.sleep(max(0.0, 3.5 - elapsed))
 
 
 async def tap_worker(session, total_taps):
-    """High-yield 0.2s tap worker."""
+    """Executes 6424-tap payloads continuously when Rocket Turbo is active with optimal 0.85s pacing."""
     global turbo_active_until
     idx = 1
-    tap_interval = 0.2
+    # 0.85s is the optimal sustained rate (zero 429 lock penalties)
+    tap_interval = 0.85
 
     while idx <= total_taps:
         await pause_event.wait()
@@ -217,13 +209,13 @@ async def tap_worker(session, total_taps):
         if not turbo_event.is_set():
             await turbo_event.wait()
 
-        # Stop 0.5s before turbo expires to prevent wasting energy
+        # Stop 0.5s before turbo expires
         if time.time() >= (turbo_active_until - 0.5):
             turbo_event.clear()
             print(f"⏳ [{get_uptime()}] Turbo expired. Waiting for next rocket...")
             continue
 
-        payload = orjson.dumps({"taps": 600})
+        payload = orjson.dumps({"taps": 6424})
 
         try:
             req_start = time.time()
@@ -235,8 +227,8 @@ async def tap_worker(session, total_taps):
                     continue
 
                 if resp.status == 429:
-                    print(f"⚠️ [{get_uptime()}] [TAP #{idx}] Rate limited (429). Pacing...")
-                    await asyncio.sleep(0.5)
+                    print(f"⚠️ [{get_uptime()}] [TAP #{idx}] 429 Hit. Waiting exact recovery window (6.0s)...")
+                    await asyncio.sleep(6.0)
                     continue
 
                 if resp.status == 200:
@@ -258,30 +250,27 @@ async def tap_worker(session, total_taps):
 async def main():
     global start_time
     start_time = time.time()
-    total_taps = int(os.getenv("TOTAL_REQUESTS", "5000"))
+    total_taps = int(os.getenv("TOTAL_REQUESTS", "50000"))
 
-    # Check if 't' argument passed (e.g. python3 test.py t)
     run_tasks = any(arg.lower() == "t" for arg in sys.argv[1:])
 
     connector = aiohttp.TCPConnector(limit=10, ssl=False)
     async with aiohttp.ClientSession(connector=connector) as session:
-        # Step 1: Auto-Login via initData
         token = await auto_login(session)
         if not token:
             print("❌ Exiting due to login failure.")
             return
 
-        # Optional Task Claimer: Only runs when 't' argument is supplied
         if run_tasks:
             print("⚡ 't' flag detected: Running Task Claimer...")
             await auto_claim_tasks(session)
 
-        print(f"\n🚀 Running Autonomous Engine | Goal: {total_taps} Taps\n")
+        print(f"🚀 Running Maximum Single-Account Yield Engine | Goal: {total_taps} Taps\n")
 
-        # Step 2: Drain initial regular energy pool + use free Full Energy boosts
+        # Step 1: Drain initial regular energy pool + use free Full Energy boosts
         await drain_energy_and_refill(session)
 
-        # Step 3: Run continuous synchronized Rocket Turbo loop + 0.2s tap engine
+        # Step 2: Continuous Rocket Boost + Turbo tapping loop
         await asyncio.gather(
             rocket_worker(session),
             tap_worker(session, total_taps)

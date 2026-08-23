@@ -2,7 +2,7 @@ name: Margcoin 24-7 Runner
 
 on:
   schedule:
-    - cron: '0 */4 * * *'
+    - cron: '*/30 * * * *'
   workflow_dispatch:
 
 jobs:
@@ -22,7 +22,7 @@ jobs:
         run: |
           pip install -r requirements.txt
 
-      - name: Run Margcoin Autonomous Engine
+      - name: Run Margcoin Autonomous Max Yield Engine
         env:
           TOTAL_REQUESTS: 1000000
         run: |
