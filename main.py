@@ -256,6 +256,10 @@ async def main():
     start_time = time.time()
     total_taps = int(os.getenv("TOTAL_REQUESTS", "5000"))
 
+    # Check if 't' argument passed (e.g. python3 test.py t)
+    run_tasks = len(sys.argv) > 1 and "t" in sys.argv[1:].lower() if hasattr(sys.argv, "__iter__") else False
+    run_tasks = any(arg.lower() == "t" for arg in sys.argv[1:])
+
     connector = aiohttp.TCPConnector(limit=10, ssl=False)
     async with aiohttp.ClientSession(connector=connector) as session:
         # Step 1: Auto-Login via initData
@@ -264,15 +268,17 @@ async def main():
             print("❌ Exiting due to login failure.")
             return
 
-        # Step 2: Auto-check and claim any pending tasks
-        await auto_claim_tasks(session)
+        # Optional Task Claimer: Only runs when 't' argument is supplied
+        if run_tasks:
+            print("⚡ 't' flag detected: Running Task Claimer...")
+            await auto_claim_tasks(session)
 
         print(f"\n🚀 Running Autonomous Engine | Goal: {total_taps} Taps\n")
-        
-        # Step 3: Drain initial regular energy pool + use free Full Energy boosts
+
+        # Step 2: Drain initial regular energy pool + use free Full Energy boosts
         await drain_energy_and_refill(session)
 
-        # Step 4: Run continuous synchronized Rocket Turbo loop + adaptive tap engine
+        # Step 3: Run continuous synchronized Rocket Turbo loop + 0.2s tap engine
         await asyncio.gather(
             rocket_worker(session),
             tap_worker(session, total_taps)
