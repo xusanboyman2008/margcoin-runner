@@ -146,10 +146,10 @@ async def drain_energy_and_refill(session):
                         if energy < 500:
                             break
                     elif resp.status == 429:
-                        await asyncio.sleep(1.2)
+                        await asyncio.sleep(0.5)
             except Exception:
                 pass
-            await asyncio.sleep(1.05)
+            await asyncio.sleep(0.2)
 
         # 2. Use free Full Energy boost
         boost_payload = orjson.dumps({"type": "fullEnergy"})
@@ -202,10 +202,10 @@ async def rocket_worker(session):
 
 
 async def tap_worker(session, total_taps):
-    """High-yield precision tap worker with adaptive pacing."""
+    """High-yield 0.2s tap worker."""
     global turbo_active_until
     idx = 1
-    tap_interval = 1.05
+    tap_interval = 0.2
 
     while idx <= total_taps:
         await pause_event.wait()
@@ -231,9 +231,8 @@ async def tap_worker(session, total_taps):
                     continue
 
                 if resp.status == 429:
-                    print(f"⚠️ [{get_uptime()}] [TAP #{idx}] Rate limited (429). Pacing up to {tap_interval + 0.2:.2f}s...")
-                    tap_interval += 0.2
-                    await asyncio.sleep(tap_interval)
+                    print(f"⚠️ [{get_uptime()}] [TAP #{idx}] Rate limited (429). Pacing...")
+                    await asyncio.sleep(0.5)
                     continue
 
                 if resp.status == 200:
@@ -242,7 +241,6 @@ async def tap_worker(session, total_taps):
                         turbo_event.clear()
                     print(f"⚡ [{get_uptime()}] [TAP #{idx}/{total_taps}] Sent: 600 | Credited: +{data.get('tapped')} | Balance: {data.get('balance'):,.2f}")
                     idx += 1
-                    tap_interval = max(1.02, tap_interval - 0.05)
 
         except Exception as e:
             print(f"⏱️ [{get_uptime()}] [TAP #{idx}] Error: {type(e).__name__} ({e})")
